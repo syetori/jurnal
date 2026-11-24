@@ -15,6 +15,174 @@ const programmingTools = [
   ['c++',/c\+\+|с\+\+|с\s*(?:плюс|плас)\s*(?:плюс|плас)|\bcin\b|\bcout\b|цин|циаут/iu]
 ];
 
+const thesisAliases = [
+  [/(?<![\p{L}])(?:[cс]\+\+|[cс]\s*(?:плюс|плас)\s*(?:плюс|плас))(?![\p{L}])/giu,'C++'],
+  [/(?<![\p{L}])(?:цин|син|cin)(?![\p{L}])/giu,'cin'],
+  [/(?<![\p{L}])(?:циаут|ци аут|си аут|синаут|циоут|сикаут|cout)(?![\p{L}])/giu,'cout'],
+  [/(?<![\p{L}])(?:пайтон|питон|python)(?![\p{L}])/giu,'Python'],
+  [/(?<![\p{L}])(?:скретч|скрэтч|scratch)(?![\p{L}])/giu,'Scratch'],
+  [/арифетик/giu,'арифметик']
+];
+const thesisPlatformToken = /^(?:C\+\+|Python(?:\s+\d+(?:\.\d+)+)?|Scratch)(?=$|[\s:()])/u;
+const thesisPlatformInText = /(?<![\p{L}\d])(?:C\+\+|Python(?:\s+\d+(?:\.\d+)+)?|Scratch)(?![\p{L}\d])/gu;
+const thesisTerms = [
+  [
+    [/^ввод\s+и\s+вывод(?:\s+данных)?\s+через\s+cin\s+и\s+cout/iu,'ввод через cin и вывод через cout'],
+    [/^(?:(?:ввод\s+(?:данных\s+)?(?:через\s+)?)?cin)/iu,'ввод через cin'],
+    [/^(?:(?:вывод\s+(?:данных\s+)?(?:через\s+)?)?cout)/iu,'вывод через cout'],
+    [/^(?:базов[а-яё]+\s+арифметик[а-яё]*|арифметик[а-яё]*\s+(?:там\s+)?базов[а-яё]+)/iu,'базовые арифметические операции'],
+    [/^(?:арифметик[а-яё]*|арифметическ[а-яё]+\s+операци[а-яё]*)/iu,'арифметические операции'],
+    [/^тип[а-яё]*\s+данных/iu,'типы данных'],
+    [/^переменн[а-яё]*/iu,'работу с переменными'],
+    [/^констант[а-яё]*/iu,'константы'],
+    [/^ввод(?:\s+данных)?/iu,'ввод данных'],
+    [/^вывод(?:\s+данных)?/iu,'вывод данных'],
+    [/^print(?:\(\))?/iu,'вывод через print'],
+    [/^ключ[а-яё]*\s+и\s+значен[а-яё]*/iu,'ключи и значения'],
+    [/^(?:словар[а-яё]*|dict)/iu,'работу со словарями'],
+    [/^списк[а-яё]*/iu,'работу со списками'],
+    [/^if\s*[-/]?\s*else/iu,'ветвление if/else'],
+    [/^(?:услови[а-яё]*|ветвлен[а-яё]*)/iu,'условия'],
+    [/^if/iu,'условие if'],
+    [/^else/iu,'ветку else'],
+    [/^цикл[а-яё]*\s+(?:for|while)/iu,match=>'цикл '+match[0].split(/\s+/).at(-1).toLowerCase()],
+    [/^цикл[а-яё]*/iu,'циклы'],
+    [/^(?:цикл\s+)?for/iu,'цикл for'],
+    [/^(?:цикл\s+)?while/iu,'цикл while'],
+    [/^функци[а-яё]*/iu,'функции'],
+    [/^(?:движени[а-яё]*|перемещени[а-яё]*)(?:\s+(?:спрайт[а-яё]*|персонаж[а-яё]*))?/iu,match=>
+      /\s/u.test(match[0])?'движение '+match[0].split(/\s+/).at(-1):'движение'],
+    [/^координат[а-яё]*/iu,'координаты'],
+    [/^спрайт[а-яё]*/iu,'работу со спрайтами'],
+    [/^костюм[а-яё]*/iu,'работу с костюмами'],
+    [/^событи[а-яё]*/iu,'события'],
+    [/^фон[а-яё]*/iu,'работу с фоном'],
+    [/^сложен[а-яё]*/iu,'сложение'],
+    [/^вычитан[а-яё]*/iu,'вычитание'],
+    [/^умножен[а-яё]*/iu,'умножение'],
+    [/^делени[а-яё]*/iu,'деление']
+  ],
+  [
+    [/^датчик[а-яё]*\s+цвета/iu,'работу с датчиком цвета'],
+    [/^датчик[а-яё]*\s+расстояни[а-яё]*/iu,'работу с датчиком расстояния'],
+    [/^датчик[а-яё]*/iu,'работу с датчиками'],
+    [/^мотор[а-яё]*/iu,'работу с мотором'],
+    [/^маршрут[а-яё]*/iu,'маршрут робота'],
+    [/^поворот[а-яё]*/iu,'повороты'],
+    [/^команд[а-яё]*/iu,'команды для робота'],
+    [/^движени[а-яё]*/iu,'движение робота']
+  ],
+  [
+    [/^сохранени[а-яё]*\s+(?:файл[а-яё]*|документ[а-яё]*)/iu,match=>'сохранение '+match[0].split(/\s+/).at(-1)],
+    [/^поиск\s+в\s+интернете/iu,'поиск в интернете'],
+    [/^поиск\s+информации/iu,'поиск информации'],
+    [/^папк[а-яё]*/iu,'работу с папками'],
+    [/^файл[а-яё]*/iu,'работу с файлами'],
+    [/^документ[а-яё]*/iu,'работу с документами'],
+    [/^парол[а-яё]*/iu,'работу с паролями'],
+    [/^клавиатур[а-яё]*/iu,'работу с клавиатурой']
+  ]
+];
+const thesisAction = /^(разобрали|изучили|рассмотрели|прошли|повторили)\s+/iu;
+const reportedAction = /(?:^|\s)(?:(?:разобра|изучи|повтори|сдела|собра|реши|написа|провери|сохрани|попробова|потренирова|работа|созда|запусти|проеха|записа|получи|ответи|исправи|выполни|объясни|закрепи)л(?:[аи]|ись|ся)?|прошл[аи]|прошёл|нашл[аи]|нашёл)(?=$|\s|[,:.])/iu;
+
+function parseThesisTopics(clause, subject, inheritedAction){
+  const action=clause.match(thesisAction);
+  let remaining=action?clause.slice(action[0].length):clause;
+  const topics=[], platforms=new Set();
+  while(remaining){
+    const filler=remaining.match(/^(?:[()\s:]+|(?:и|там|ну)(?=$|\s)\s*)/iu);
+    if(filler){remaining=remaining.slice(filler[0].length);continue;}
+    const platform=subject===0?remaining.match(thesisPlatformToken)?.[0]:null;
+    if(platform){platforms.add(platform);remaining=remaining.slice(platform.length);continue;}
+    const operators=subject===0&&remaining.match(/^[+−*\/-](?:\s+[+−*\/-])+(?=$|\s)/u);
+    if(operators){
+      const labels={'+':'сложение','-':'вычитание','−':'вычитание','*':'умножение','/':'деление'};
+      topics.push(...operators[0].split(/\s+/).map(mark=>labels[mark]));
+      remaining=remaining.slice(operators[0].length);
+      continue;
+    }
+    const known=thesisTerms[subject]?.find(([pattern])=>{
+      const match=remaining.match(pattern);
+      return match&&!/^[\p{L}\d]/u.test(remaining.slice(match[0].length));
+    });
+    if(!known)return null;
+    const [pattern,label]=known;
+    const match=remaining.match(pattern);
+    topics.push(typeof label==='function'?label(match):label);
+    remaining=remaining.slice(match[0].length);
+  }
+  if(platforms.size>1)return null;
+  const verb=(action?.[1]??inheritedAction)?.toLowerCase()==='повторили'?'Повторили':'Разобрали';
+  return {topics,platform:[...platforms][0],action:verb};
+}
+
+function formatThesisList(words){
+  return words.length<2?words[0]??'':words.slice(0,-1).join(', ')+' и '+words.at(-1);
+}
+
+function formatThesisTopics(topics){
+  const terms=[...topics];
+  if(topics.has('работу со словарями')&&topics.has('ключи и значения')){
+    terms[terms.indexOf('работу со словарями')]='ключи и значения в словарях';
+    terms.splice(terms.indexOf('ключи и значения'),1);
+  }
+  const operationNames=['сложение','вычитание','умножение','деление'];
+  const operations=terms.filter(term=>operationNames.includes(term));
+  const arithmetic=terms.find(term=>term.endsWith('арифметические операции'));
+  if(arithmetic&&operations.length){
+    terms[terms.indexOf(arithmetic)]=arithmetic+' ('+formatThesisList(operations)+')';
+    return formatThesisList(terms.filter(term=>!operations.includes(term)));
+  }
+  return formatThesisList(terms);
+}
+
+function draftLessonNote(raw, subject){
+  const clean=thesisAliases.reduce((text,[pattern,alias])=>text.replace(pattern,alias), raw)
+    .replace(/\s+и\s+т\.?\s*д\.?(?=$|[\s,;!?])/giu,'')
+    .replace(/([+−*\/-])\s*,\s*(?=[+−*\/-](?:$|[\s,;]))/gu,'$1 ');
+  const clauses=clean.split(/(?<=[.!?])\s+|[\n;]/u).flatMap(statement=>{
+    const pieces=confirmedLessonText(statement,'\n').split('\n').flatMap(text=>
+      text.split(/\s+и\s+(?=(?:решили|собрали|написали|сделали|проверили|сохранили|создали|запустили)\s)/iu));
+    const inheritedAction=pieces[0]?.match(thesisAction)?.[1];
+    return pieces.map(text=>({text:text.trim(),inheritedAction})).filter(clause=>clause.text);
+  });
+  const platforms=subject===0?[...new Set(clauses.flatMap(({text})=>text.match(thesisPlatformInText)??[]))]:[];
+  const defaultPlatform=platforms.length===1?platforms[0]:'';
+  const items=[], groups=new Map(), toolMentions=new Set();
+  for(const {text:clause,inheritedAction} of clauses){
+    if(clauses.length>1&&/^(?:программирование|робототехника|цифровая грамотность)$/iu.test(clause))continue;
+    const parsed=parseThesisTopics(clause,subject,inheritedAction);
+    if(!parsed){
+      const capitalized=clause.charAt(0).toLocaleUpperCase('ru')+clause.slice(1);
+      items.push(reportedAction.test(clause)?capitalized+'.':'Тема занятия — '+clause+'.');
+      continue;
+    }
+    if(!parsed.topics.length){
+      if(parsed.platform)toolMentions.add(parsed.platform);
+      continue;
+    }
+    const platform=parsed.platform??defaultPlatform;
+    const key=platform+'|'+parsed.action;
+    if(!groups.has(key)){
+      const group={platform,action:parsed.action,topics:new Set()};
+      groups.set(key,group);
+      items.push(group);
+    }
+    const group=groups.get(key);
+    for(const topic of parsed.topics)group.topics.add(topic);
+  }
+  const sentences=items.map(item=>{
+    if(typeof item==='string')return item;
+    const start=item.platform?'В '+item.platform+' '+item.action.toLowerCase():item.action;
+    return start+' '+formatThesisTopics(item.topics)+'.';
+  });
+  if(toolMentions.size&&!sentences.some(text=>[...toolMentions].some(platform=>text.includes(platform)))){
+    sentences.unshift('Работали в '+formatThesisList([...toolMentions])+'.');
+  }
+  return [...new Set(sentences)].join(' ');
+}
+
 // Each entry starts from an example from the recorded topic and adds at most one step.
 const lessonTracks = [
   {

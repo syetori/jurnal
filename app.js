@@ -439,14 +439,10 @@ function viewHistoryCell(id,day){
   }).join('');
   openDialog(esc(data.students[id].name)+' · '+viewDate(day),body||'<p class="muted">Нет отметки или темы за этот день</p>');
 }
-function localDraft(raw){
-  const cleaned=confirmedLessonText(raw,', ').replace(/с\s*(?:плюс|плас)\s*(?:плюс|плас)/giu,'C++').replace(/(цин|син)(?![\p{L}])/gu,'cin').replace(/(циаут|ци аут|си аут|синаут|циоут|сикаут)(?![\p{L}])/gu,'cout').replace(/\s+/g,' ');
-  return cleaned?'На занятии: '+cleaned+'.':'';
-}
 function draft(){
   const form=$('noteForm'), raw=form.elements.raw.value.trim();
   if(!raw){form.elements.raw.reportValidity();return;}
-  form.elements.note.value=localDraft(raw);
+  form.elements.note.value=draftLessonNote(raw,form.context.subject);
   form.dataset.drafted='true';
   $('draftLabel').hidden=false;
   $('draftHint').textContent=form.elements.note.value?'':'Укажите, что действительно проходили на занятии.';
@@ -607,7 +603,8 @@ document.addEventListener('submit',async event=>{
       await save({['students/'+(form.dataset.id||crypto.randomUUID())]:{name,grade,...(age?{age:Number(age)}:{})}});
       message('Ученик сохранён');
     }else if(form.id==='noteForm'){
-      const raw=value('raw'), note=value('note')||(form.dataset.drafted?'':localDraft(raw)), context=form.context;
+      const raw=value('raw'), context=form.context;
+      const note=value('note')||(form.dataset.drafted?'':draftLessonNote(raw,context.subject));
       if(!canWriteJournal(context.date))throw Error('Отметки доступны за сегодня');
       if(!raw)throw Error('Введите ключевые слова');
       if(!confirmedLessonText(note))throw Error('Добавьте подтверждённую тему занятия');
