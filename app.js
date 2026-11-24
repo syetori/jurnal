@@ -17,9 +17,18 @@ const dateRange = key => {
   const [year, month] = key.split('-').map(Number);
   return Array.from({length:new Date(Date.UTC(year,month,0)).getUTCDate()},(_,i)=>dateKey(year,month,i+1));
 };
-const readLink = () => /^#([A-Za-z0-9_-]{32})(?:\/[a-z]+)?$/.exec(location.hash)?.[1];
-const sharedKey = readLink();
-const journalHash = page => '#' + sharedKey + '/' + page;
+const sharedLinkPattern = /^#([A-Za-z0-9_-]{32})(?:\/([a-z]+))?$/;
+const accessStorageKey = 'smena:access:' + location.pathname.replace(/\/index\.html$/, '/');
+function readRememberedKey(){
+  try {
+    const key=localStorage.getItem(accessStorageKey);
+    return key&&/^[A-Za-z0-9_-]{32}$/.test(key)?key:undefined;
+  }catch{return undefined;}
+}
+const readLink = () => sharedLinkPattern.exec(location.hash)?.[1];
+const readActiveKey = () => readLink() ?? readRememberedKey();
+const sharedKey = readActiveKey();
+const journalHash = page => readRememberedKey()===sharedKey?'#'+page:'#'+sharedKey+'/'+page;
 const empty = () => ({students:{},records:{},shifts:{},schedules:{}});
 const openingDate = today();
 let data = empty(), remoteState = sharedKey ? 'loading' : 'missing';
@@ -34,9 +43,24 @@ function recordKey(day,sub,id,period){return [day,sub,id,...(period?[period]:[])
 function stored(id, day=date, sub=subject, period){return data.records[recordKey(day,sub,id,period)];}
 const classes = () => [...new Set(Object.values(data.students).map(s=>s.grade))].sort((a,b)=>a.localeCompare(b,'ru',{numeric:true}));
 const currentPage = () => {
-  const route=location.hash.split('/')[1];
+  const route=sharedLinkPattern.exec(location.hash)?.[2]??location.hash.slice(1);
   return Object.hasOwn(pages,route)?route:'history';
 };
+function rememberVerifiedAccess(){
+  if(readLink()!==sharedKey)return;
+  try {
+    localStorage.setItem(accessStorageKey,sharedKey);
+    const url=new URL(location.href);
+    const page=currentPage();
+    url.hash=page==='history'?'':page;
+    window.history.replaceState(window.history.state,'',url);
+  }catch{}
+}
+function removeDeniedAccess(){
+  try {
+    if(readRememberedKey()===sharedKey)localStorage.removeItem(accessStorageKey);
+  }catch{}
+}
 function message(value){
   $('toast').textContent=value; $('toast').style.display='block';
   clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('toast').style.display='none',3500);
@@ -64,6 +88,7 @@ async function connectJournal(){
         clearTimeout(deadline);
         data=normalized(snapshot);
         remoteState='ready';
+        rememberVerifiedAccess();
         render();
       },
       online=>{
@@ -75,6 +100,7 @@ async function connectJournal(){
         clearTimeout(deadline);
         data=empty();
         remoteState='denied';
+        removeDeniedAccess();
         if($('dialog').open)$('dialog').close();
         render();
       }
@@ -313,7 +339,7 @@ function plan(){
 }
 function connectionState(){
   const text={
-    missing:'Откройте общую ссылку на журнал',
+    missing:'Откройте полную ссылку один раз в этом браузере',
     loading:'Загружаем журнал…',
     denied:'Журнал недоступен по этой ссылке',
     error:'Не удалось подключиться к журналу'
@@ -638,7 +664,7 @@ document.addEventListener('submit',async event=>{
   }catch(error){submitError(error,button);}
 });
 window.addEventListener('hashchange',()=>{
-  if(readLink()!==sharedKey){location.reload();return;}
+  if(readActiveKey()!==sharedKey){location.reload();return;}
   const previousPage=document.body.dataset.page;
   render();
   if(previousPage!==currentPage()&&matchMedia('(max-width: 700px), (max-width: 950px) and (pointer: coarse)').matches)window.scrollTo(0,0);
