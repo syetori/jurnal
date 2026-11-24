@@ -248,17 +248,16 @@ async function readSchedulePhoto(){
   buttons.forEach(button=>button.disabled=true);
   hint.textContent='Читаем фото…';
   try{
-    const result=await readPrintedSchedule(draft.image,draft.rotation,text=>{if(form.isConnected)hint.textContent=text;}).catch(()=>null);
+    const result=await readPrintedSchedule(draft.image,draft.rotation,text=>{if(form.isConnected)hint.textContent=text;});
     if(draft!==scheduleDraft||!form.isConnected||!$('dialog').open)return;
-    const rows=normalizePhotoRows(result?.rows);
-    if(draft!==scheduleDraft||!form.isConnected||!$('dialog').open)return;
+    const rows=normalizePhotoRows(result.rows);
     if(result?.rotation!==undefined&&draft.rotation===null){draft.rotation=result.rotation;showSchedulePhoto();}
     if(rows.length)mergeImported(rows);
     const incomplete=rows.filter(row=>!row.grade).length;
     hint.textContent=rows.length?'Найдено уроков: '+rows.length+(incomplete?' · выберите класс в пустых строках: '+incomplete:'')+'.':
       'Таблица не прочиталась. Поверните фото или выберите более чёткий снимок.';
   }catch(error){
-    if(form.isConnected)hint.textContent='Не удалось прочитать фото. Попробуйте повернуть снимок или добавьте строки вручную.';
+    if(draft===scheduleDraft&&form.isConnected)hint.textContent='Сбой распознавания. Проверьте соединение и нажмите «Распознать» ещё раз.';
   }finally{
     draft.reading=false;
     buttons.forEach(button=>button.disabled=false);

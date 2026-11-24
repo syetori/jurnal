@@ -27,16 +27,26 @@ function photoCanvas(image, degrees, limit){
 }
 
 let ocrScript;
-function enablePrintedOCR(){
+function enablePrintedOCR(source){
   if(window.Tesseract)return Promise.resolve();
   if(!ocrScript){
     ocrScript=new Promise((resolve,reject)=>{
       const script=document.createElement('script');
-      script.src=new URL('ocr/tesseract.min.js',location.href);
-      script.onload=resolve;
-      script.onerror=()=>{ocrScript=null;script.remove();reject(Error('Не удалось загрузить распознавание'));};
+      const fail=()=>{
+        clearTimeout(timeout);
+        script.remove();
+        reject(Error('Не загрузился движок распознавания'));
+      };
+      const timeout=setTimeout(fail,12000);
+      script.src=source;
+      script.onload=()=>{
+        clearTimeout(timeout);
+        if(window.Tesseract?.createWorker)resolve();
+        else fail();
+      };
+      script.onerror=fail;
       document.head.append(script);
-    });
+    }).catch(error=>{ocrScript=null;throw error;});
   }
   return ocrScript;
 }
@@ -51,6 +61,36 @@ function subjectFromPrint(text){
 
 function closestAnchor(anchors, at, field){
   return anchors.reduce((best,current)=>!best||Math.abs(current[field]-at)<Math.abs(best[field]-at)?current:best,null);
+}
+
+function removeHeaderLineArtifacts(columns){
+  const confirmed=columns.filter(column=>!column.grade.includes('?'));
+  if(confirmed.length<3)return columns;
+  const gaps=confirmed.slice(1).map((column,index)=>column.x-confirmed[index].x).sort((a,b)=>a-b);
+  const width=gaps[0];
+  if(width<44||gaps[1]>width*1.25)return columns;
+  const uncertain=columns.filter(column=>column.grade.includes('?'));
+  const middle=[];
+  for(const [index,left] of confirmed.entries()){
+    middle.push(left);
+    const right=confirmed[index+1];
+    if(!right)break;
+    const distance=right.x-left.x;
+    const count=Math.round(distance/width);
+    if(Math.abs(distance/count-width)>width*.22){
+      middle.push(...uncertain.filter(column=>column.x>left.x+width*.4&&column.x<right.x-width*.4));
+      continue;
+    }
+    for(let i=1;i<count;i++){
+      const x=left.x+i*distance/count;
+      const candidate=closestAnchor(uncertain,x,'x');
+      if(candidate&&Math.abs(candidate.x-x)<width*.35)middle.push(candidate);
+      else middle.push({grade:'?',x,y:left.y+i*(right.y-left.y)/count});
+    }
+  }
+  const before=uncertain.filter(column=>column.x<confirmed[0].x-width*.7);
+  const after=uncertain.filter(column=>column.x>confirmed.at(-1).x+width*.7);
+  return [...before,...middle,...after];
 }
 
 function extractPrintedSchedule(words, height){
@@ -73,7 +113,7 @@ function extractPrintedSchedule(words, height){
   },[]);
   if(!bestHeader.length)return {rows:[],score:0};
   const headerY=bestHeader.reduce((sum,item)=>sum+item.y,0)/bestHeader.length;
-  const columns=bestHeader.sort((a,b)=>a.x-b.x).filter((column,i,list)=>!i||column.x-list[i-1].x>34);
+  const columns=removeHeaderLineArtifacts(bestHeader.sort((a,b)=>a.x-b.x).filter((column,i,list)=>!i||column.x-list[i-1].x>34));
   const firstColumn=columns[0].x;
   const timeWords=[];
   for(const word of words){
@@ -143,13 +183,41 @@ function confirmExampleHeaders(rows,columns){
   if(exact>=3)for(const row of rows)row.grade=layout[row.column][0];
 }
 let printedWorker;
+async function printedOCRPaths(){
+  const local=new URL('ocr/',location.href).href;
+  const files=['tesseract.min.js','worker.min.js','tesseract-core-lstm.wasm.js','rus.traineddata.gz','kaz.traineddata.gz'];
+  const present=await Promise.all(files.map(file=>fetch(local+file,{
+    method:'HEAD',signal:AbortSignal.timeout?.(4500)
+  }).then(response=>response.ok&&!response.headers.get('Content-Type')?.includes('text/html')).catch(()=>false)));
+  if(present.every(Boolean)){
+    return {script:local+files[0],options:{workerPath:local+files[1],corePath:local+files[2],langPath:local,workerBlobURL:false}};
+  }
+  const packages='https://cdn.jsdelivr.net/npm/';
+  const tesseract=packages+'tesseract.js@6.0.1/dist/';
+  return {
+    script:tesseract+files[0],
+    options:{workerPath:tesseract+files[1],corePath:packages+'tesseract.js-core@6.1.2/'+files[2],workerBlobURL:true}
+  };
+}
 function prepareScheduleOCR(){
   if(!printedWorker){
     printedWorker=(async()=>{
-      await enablePrintedOCR();
-      const dir=new URL('ocr/',location.href).href;
-      return window.Tesseract.createWorker(['rus','kaz'],1,{
-        workerPath:dir+'worker.min.js',corePath:dir+'tesseract-core-lstm.wasm.js',langPath:dir,workerBlobURL:false
+      const {script,options}=await printedOCRPaths();
+      await enablePrintedOCR(script);
+      return new Promise((resolve,reject)=>{
+        let finished=false;
+        function fail(error){
+          finished=true;
+          clearTimeout(timeout);
+          reject(error);
+        }
+        const timeout=setTimeout(()=>fail(Error('Движок распознавания загрузился слишком долго')),30000);
+        window.Tesseract.createWorker(['kaz','rus'],1,{...options,errorHandler:fail}).then(worker=>{
+          if(finished){worker.terminate();return;}
+          finished=true;
+          clearTimeout(timeout);
+          resolve(worker);
+        },fail);
       });
     })().catch(error=>{printedWorker=null;throw error;});
   }
@@ -159,24 +227,26 @@ function prepareScheduleOCR(){
 async function refinePrintedHeaders(worker,canvas,result){
   const unclear=result.headers?.filter(header=>header.grade.includes('?'))??[];
   if(!unclear.length||!result.rows.some(row=>row.grade.includes('?')))return result;
-  const tileWidth=145, tileHeight=96;
-  const strip=document.createElement('canvas');
-  strip.width=unclear.length*tileWidth;
-  strip.height=tileHeight;
-  const ctx=strip.getContext('2d');
-  ctx.fillStyle='white';
-  ctx.fillRect(0,0,strip.width,strip.height);
-  unclear.forEach(({x,y,box},i)=>{
-    const width=Math.max(34,(box?.x1-box?.x0||24)+12);
-    const height=Math.max(16,(box?.y1-box?.y0||16)+6);
-    ctx.drawImage(canvas,Math.max(0,x-width/2),Math.max(0,y-height/2),width,height,i*tileWidth+10,15,tileWidth-20,tileHeight-30);
-  });
-  await worker.setParameters({tessedit_pageseg_mode:'11',tessedit_char_whitelist:'0123456789АБВГДЕӘЖЗИЙКЛМНОПРСТУФХЦЧШЩЫЭЮЯ'});
-  const {data}=await worker.recognize(strip,{}, {blocks:true,text:false});
+  const sample=document.createElement('canvas');
+  sample.width=240;
+  sample.height=160;
+  const ctx=sample.getContext('2d');
+  await worker.setParameters({tessedit_pageseg_mode:'7',tessedit_char_whitelist:'0123456789АБВГДЕӘЖЗИЙКЛМНОПРСТУФХЦЧШЩЫЭЮЯ'});
   const found=new Map();
-  for(const word of recognizedWords(data)){
-    const grade=classKey(word.text);
-    if(/^\d{1,2}[А-ЯӘ]$/.test(grade))found.set(unclear[Math.floor(word.x/tileWidth)],grade);
+  for(const header of unclear){
+    const {x,y,box}=header;
+    const width=(box?box.x1-box.x0:26)+8;
+    const height=(box?box.y1-box.y0:16)+8;
+    const scale=Math.min(4,200/width,120/height);
+    ctx.filter='none';
+    ctx.fillStyle='white';
+    ctx.fillRect(0,0,sample.width,sample.height);
+    ctx.filter='grayscale(1) contrast(1.6)';
+    ctx.drawImage(canvas,Math.max(0,x-width/2),Math.max(0,y-height/2),width,height,
+      (sample.width-width*scale)/2,(sample.height-height*scale)/2,width*scale,height*scale);
+    const {data}=await worker.recognize(sample);
+    const grade=classKey(data.text);
+    if(/^\d{1,2}[А-ЯӘІҢҒҮҰҚӨҺ]$/u.test(grade))found.set(header,grade);
   }
   for(const row of result.rows){
     if(!row.grade.includes('?'))continue;
@@ -198,6 +268,7 @@ function readPrintedSchedule(image,rotation,onProgress){
   return run;
 }
 async function scanPrintedSchedule(image, rotation, onProgress){
+  onProgress('Загружаем распознавание…');
   const worker=await prepareScheduleOCR();
   await worker.setParameters({tessedit_pageseg_mode:'11',tessedit_char_whitelist:''});
   let best={rows:[],score:0}, bestCanvas;
