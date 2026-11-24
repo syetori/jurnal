@@ -17,23 +17,11 @@ const dateRange = key => {
   const [year, month] = key.split('-').map(Number);
   return Array.from({length:new Date(Date.UTC(year,month,0)).getUTCDate()},(_,i)=>dateKey(year,month,i+1));
 };
-const sharedLinkPattern = /^#([A-Za-z0-9_-]{32})(?:\/([a-z]+))?$/;
-const accessStorageKey = 'smena:access:' + location.pathname.replace(/\/index\.html$/, '/');
-function readRememberedKey(){
-  try {
-    const key=localStorage.getItem(accessStorageKey);
-    return key&&/^[A-Za-z0-9_-]{32}$/.test(key)?key:undefined;
-  }catch{return undefined;}
-}
-const readLink = () => sharedLinkPattern.exec(location.hash)?.[1];
-const readActiveKey = () => readLink() ?? readRememberedKey();
-const sharedKey = readActiveKey();
-const journalHash = page => readRememberedKey()===sharedKey?'#'+page:'#'+sharedKey+'/'+page;
+const journalHash = page => '#'+page;
 const empty = () => ({students:{},records:{},shifts:{},schedules:{}});
 const openingDate = today();
-let data = empty(), remoteState = sharedKey ? 'loading' : 'missing';
+let data = empty(), remoteState = 'loading';
 let journalSession;
-const pagesLocked = () => !journalSession || !['ready','offline'].includes(remoteState);
 let activeLesson=null, mobileHistoryView='notes';
 let date=openingDate, month=date.slice(0,7), historyMonth=month, subject=0, query='', grade='', toastTimer, pending=false;
 const selected=new Set();
@@ -43,24 +31,9 @@ function recordKey(day,sub,id,period){return [day,sub,id,...(period?[period]:[])
 function stored(id, day=date, sub=subject, period){return data.records[recordKey(day,sub,id,period)];}
 const classes = () => [...new Set(Object.values(data.students).map(s=>s.grade))].sort((a,b)=>a.localeCompare(b,'ru',{numeric:true}));
 const currentPage = () => {
-  const route=sharedLinkPattern.exec(location.hash)?.[2]??location.hash.slice(1);
+  const route=location.hash.slice(1);
   return Object.hasOwn(pages,route)?route:'history';
 };
-function rememberVerifiedAccess(){
-  if(readLink()!==sharedKey)return;
-  try {
-    localStorage.setItem(accessStorageKey,sharedKey);
-    const url=new URL(location.href);
-    const page=currentPage();
-    url.hash=page==='history'?'':page;
-    window.history.replaceState(window.history.state,'',url);
-  }catch{}
-}
-function removeDeniedAccess(){
-  try {
-    if(readRememberedKey()===sharedKey)localStorage.removeItem(accessStorageKey);
-  }catch{}
-}
 function message(value){
   $('toast').textContent=value; $('toast').style.display='block';
   clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('toast').style.display='none',3500);
@@ -83,12 +56,11 @@ async function connectJournal(){
   try{
     const {openSharedJournal}=await import('./firebase-shared.js');
     journalSession=openSharedJournal(
-      window.JOURNAL_CONFIG.firebaseDatabaseURL, sharedKey,
+      window.JOURNAL_CONFIG.firebaseDatabaseURL, 'public',
       snapshot=>{
         clearTimeout(deadline);
         data=normalized(snapshot);
         remoteState='ready';
-        rememberVerifiedAccess();
         render();
       },
       online=>{
@@ -100,7 +72,6 @@ async function connectJournal(){
         clearTimeout(deadline);
         data=empty();
         remoteState='denied';
-        removeDeniedAccess();
         if($('dialog').open)$('dialog').close();
         render();
       }
@@ -337,24 +308,23 @@ function plan(){
     '<label>Темп<select name="readiness"><option value="check">Проверим в начале</option><option value="support">Нужно закрепить</option><option value="independent">Получается самостоятельно</option></select></label>'+
     '<div class="actions"><button class="primary" '+(!Object.keys(data.students).length?'disabled':'')+'>Подготовить урок</button></div></form><div id="planResult" aria-live="polite"></div></section>';
 }
-function connectionState(){
-  const text={
-    missing:'Откройте полную ссылку один раз в этом браузере',
-    loading:'Загружаем журнал…',
-    denied:'Журнал недоступен по этой ссылке',
-    error:'Не удалось подключиться к журналу'
-  }[remoteState];
-  return title('Смена',text,remoteState==='error'?'<button data-retry>Повторить</button>':'');
+function renderConnectionState(){
+  const status=$('syncStatus');
+  status.hidden=remoteState==='ready';
+  status.textContent={
+    loading:'Загружаем записи…',
+    offline:'Связь потеряна',
+    denied:'Firebase не открыл раздел shared_public.',
+    error:'Не удалось подключиться к Firebase.'
+  }[remoteState]??'';
+  if(remoteState==='error'||remoteState==='denied'){
+    status.insertAdjacentHTML('beforeend',' <button type="button" data-retry>Повторить</button>');
+  }
 }
 
 let journalScope;
 function render(){
-  const locked=pagesLocked();
-  document.body.classList.toggle('journal-locked',locked);
-  if(locked){
-    $('content').innerHTML=connectionState();
-    return;
-  }
+  renderConnectionState();
   const page=currentPage(), shift=byDate();
   const matrix=$('matrixScroll');
   const previousScroll=matrix?.dataset.month===historyMonth?(matrix.clientWidth?matrix.scrollLeft:matrix.savedScroll):null;
@@ -371,7 +341,6 @@ function render(){
   renderMiniSchedule();
   $('daily').disabled=shift===null;
   $('daily').dataset.shift=date;
-  $('connection').textContent=remoteState==='offline'?'Связь потеряна':'';
   const content=$('content');
   const form=$('planForm');
   if(form&&page==='plan'&&(form.contains(document.activeElement)||$('planResult')?.textContent))return;
@@ -664,13 +633,12 @@ document.addEventListener('submit',async event=>{
   }catch(error){submitError(error,button);}
 });
 window.addEventListener('hashchange',()=>{
-  if(readActiveKey()!==sharedKey){location.reload();return;}
   const previousPage=document.body.dataset.page;
   render();
   if(previousPage!==currentPage()&&matchMedia('(max-width: 700px), (max-width: 950px) and (pointer: coarse)').matches)window.scrollTo(0,0);
 });
 render();
-if(sharedKey)connectJournal();
+connectJournal();
 let renderedTime=clockTime(), renderedDay=workingDate();
 setInterval(()=>{
   const time=clockTime(), day=workingDate();
