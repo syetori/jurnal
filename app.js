@@ -8,7 +8,10 @@ const icon = name => '<svg class="icon" aria-hidden="true" viewBox="0 0 24 24" f
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
 const dateParts = new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Qyzylorda',year:'numeric',month:'2-digit',day:'2-digit'});
-const today = () => dateParts.format(new Date());
+const today = () => {
+  const parts=Object.fromEntries(dateParts.formatToParts(new Date()).map(({type,value})=>[type,value]));
+  return [parts.year,parts.month,parts.day].join('-');
+};
 const format = (key, options) => new Intl.DateTimeFormat('ru',{timeZone:'UTC',...options}).format(new Date(key+'T12:00:00Z'));
 const viewDate = key => format(key,{day:'numeric',month:'long'});
 const planned = key => [null,0,1,0,0,1,1][new Date(key+'T12:00:00Z').getUTCDay()];
@@ -38,12 +41,23 @@ function message(value){
   $('toast').textContent=value; $('toast').style.display='block';
   clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('toast').style.display='none',3500);
 }
+const validDayKey = day => typeof day==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(day)&&!Number.isNaN(Date.parse(day));
+const validSubject = sub => Number.isInteger(sub)&&Object.hasOwn(subjects,sub);
+const entries = records => records&&typeof records==='object'?Object.entries(records):[];
 function normalized(value){
-  const journal=empty();
-  for(const key of Object.keys(journal)){
-    if(value?.[key]&&typeof value[key]==='object')journal[key]=value[key];
-  }
-  return journal;
+  const students=Object.fromEntries(entries(value?.students).filter(([,student])=>
+    typeof student?.name==='string'&&typeof student.grade==='string'));
+  const records=Object.fromEntries(entries(value?.records).filter(([,row])=>
+    validDayKey(row?.date)&&validSubject(row.subject)&&typeof row.student==='string'&&
+    (row.note==null||typeof row.note==='string')));
+  const shifts=Object.fromEntries(entries(value?.shifts).filter(([day,teacher])=>validDayKey(day)&&(teacher===0||teacher===1)));
+  const schedules=Object.fromEntries(entries(value?.schedules).filter(([day])=>validDayKey(day)).map(([day,schedule])=>[
+    day,{lessons:entries(schedule?.lessons).map(([,lesson])=>lesson).filter(lesson=>
+      typeof lesson?.id==='string'&&typeof lesson.grade==='string'&&validSubject(lesson.subject)&&
+      (lesson.number==null||Number.isInteger(lesson.number))&&
+      validTime(lesson.start)&&validTime(lesson.end)&&lesson.start<lesson.end).sort(scheduleOrder)}
+  ]));
+  return {students,records,shifts,schedules};
 }
 
 async function connectJournal(){
@@ -140,8 +154,7 @@ function attendanceLabel(row,id,showReason=true){
 }
 function statuses(value){return ({yes:'Был',no:'Не был'})[value]||'Не отмечен';}
 function noteKey(note){return note.trim().toLocaleLowerCase('ru').replace(/\s+/g,' ');}
-const colors=['#e7f3ee','#f0edf9','#eaf1fa','#fbf2df','#f8ebef','#edf4dc'];
-function shade(key){return colors[[...key].reduce((sum,c)=>(sum*31+c.codePointAt(0))>>>0,0)%colors.length];}
+const sameTopicBackground='#edf4dc';
 function studentSelect(id,name){
   const label='Выбрать '+esc(name);
   return '<td class="pick-student"><label><input type="checkbox" data-select="'+esc(id)+'" aria-label="'+label+'" '+(selected.has(id)?'checked':'')+'></label></td>';
@@ -158,7 +171,7 @@ function tableBody(){
       (edit?studentSelect(id,student.name):'')+
       '<td class="student">'+esc(student.name)+'<small class="mobile-only student-grade">'+esc(student.grade)+'</small></td><td class="desktop-grade nowrap">'+esc(student.grade)+'</td><td class="attendance-cell">'+attendanceLabel(row,edit?id:null)+'</td>'+
       '<td class="lesson-note previous-note'+(!prior?' record-empty':'')+'">'+(prior?mobileField('Прошлая тема')+'<small>'+viewDate(prior.date)+'</small><div>'+esc(prior.note)+'</div>':'—')+'</td>'+
-      '<td class="current-note'+(!note?' record-empty':'')+'">'+(note?mobileField('Тема урока')+'<span class="topic" '+(frequencies[k]>1?'style="background:'+shade(k)+'"':'')+'>'+esc(note)+'</span>':'—')+'</td>'+
+      '<td class="current-note'+(!note?' record-empty':'')+'">'+(note?mobileField('Тема урока')+'<span class="topic" '+(frequencies[k]>1?'style="background:'+sameTopicBackground+'"':'')+'>'+esc(note)+'</span>':'—')+'</td>'+
       (edit?'<td class="student-actions"><div class="row-actions"><button data-note="'+esc(id)+'" title="Запись занятия" aria-label="Запись занятия">'+icon('note')+'<span class="mobile-only">Тема</span></button><button data-student="'+esc(id)+'" title="Править ученика" aria-label="Править ученика">'+icon('edit')+'</button></div></td>':'')+'</tr>';
   }).join('')||'<tr><td colspan="'+(edit?7:5)+'" class="blank">Ученики не найдены</td></tr>';
 }
@@ -229,7 +242,7 @@ function historyRows(days, students){
       days.map(day=>{
         const record=summary.get(recordKey(day,subject,id)), note=record?.notes.join(' · ');
         const key=note?day+' '+noteKey(note):'';
-        const tint=note&&themeCounts.get(key)>1?' style="--theme-color:'+shade(noteKey(note))+'"':'';
+        const tint=note&&themeCounts.get(key)>1?' style="--theme-color:'+sameTopicBackground+'"':'';
         const label=student.name+' · '+labels.get(day)+' · '+statuses(record?.status)+(note?' · '+note:'');
         const mark=record?.status==='yes'?'✓':record?.status==='no'?'−':'';
         return '<td class="'+(day===now?'today-col':'')+'"><button data-cell="'+esc(id)+'" data-day="'+day+'" class="cell '+esc(record?.status||'')+'"'+tint+' aria-label="'+esc(label)+'" title="'+esc(label)+'">'+mark+(note?'<i aria-hidden="true"></i>':'')+'</button></td>';
@@ -427,8 +440,8 @@ function viewHistoryCell(id,day){
   openDialog(esc(data.students[id].name)+' · '+viewDate(day),body||'<p class="muted">Нет отметки или темы за этот день</p>');
 }
 function localDraft(raw){
-  const cleaned=raw.trim().replace(/с\s*(?:плюс|плас)\s*(?:плюс|плас)/giu,'C++').replace(/(цин|син)(?![\p{L}])/gu,'cin').replace(/(циаут|ци аут|си аут|синаут|циоут|сикаут)(?![\p{L}])/gu,'cout').replace(/\s+/g,' ').replace(/[.!,;]+$/,'');
-  return /\?$/.test(cleaned)?cleaned:'На занятии: '+cleaned+'.';
+  const cleaned=confirmedLessonText(raw,', ').replace(/с\s*(?:плюс|плас)\s*(?:плюс|плас)/giu,'C++').replace(/(цин|син)(?![\p{L}])/gu,'cin').replace(/(циаут|ци аут|си аут|синаут|циоут|сикаут)(?![\p{L}])/gu,'cout').replace(/\s+/g,' ');
+  return cleaned?'На занятии: '+cleaned+'.':'';
 }
 function draft(){
   const form=$('noteForm'), raw=form.elements.raw.value.trim();
@@ -436,6 +449,14 @@ function draft(){
   form.elements.note.value=localDraft(raw);
   form.dataset.drafted='true';
   $('draftLabel').hidden=false;
+  $('draftHint').textContent=form.elements.note.value?'':'Укажите, что действительно проходили на занятии.';
+}
+function recentLessonNotes(student,sub){
+  const stamp=row=>row.date+' '+(scheduleFor(row.date).find(lesson=>lesson.id===row.period)?.start??'');
+  const day=workingDate();
+  return Object.values(data.records).filter(row=>row.student===student&&row.subject===sub&&row.status==='yes'&&row.date<=day)
+    .map(row=>({time:stamp(row),note:confirmedLessonText(row.note,', ')}))
+    .filter(row=>row.note).sort((a,b)=>b.time.localeCompare(a.time)).slice(0,8).map(row=>row.note);
 }
 function goToJournal(day,lesson=null){
   date=day;month=day.slice(0,7);activeLesson=lesson;selected.clear();
@@ -589,7 +610,7 @@ document.addEventListener('submit',async event=>{
       const raw=value('raw'), note=value('note')||(form.dataset.drafted?'':localDraft(raw)), context=form.context;
       if(!canWriteJournal(context.date))throw Error('Отметки доступны за сегодня');
       if(!raw)throw Error('Введите ключевые слова');
-      if(!note||(!value('note')&&/\?$/.test(raw)))throw Error('Добавьте подтверждённую тему занятия');
+      if(!confirmedLessonText(note))throw Error('Добавьте подтверждённую тему занятия');
       const changes=Object.fromEntries(form.ids.map(id=>{
         const previous=form.lesson?lessonRecord(id,context.date,form.lesson):null;
         const period=previous?previous.period:form.lesson?.id;
@@ -620,9 +641,7 @@ document.addEventListener('submit',async event=>{
     }else if(form.id==='planForm'){
       const student=data.students[value('student')], sub=Number(value('sub'));
       if(!student)throw Error('Выберите ученика');
-      const history=Object.values(data.records).filter(r=>r.student===value('student')&&r.subject===sub&&r.status==='yes'&&r.note)
-        .sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8).map(({date,note})=>({date,note}));
-      const notes=history.map(record=>record.note);
+      const notes=recentLessonNotes(value('student'),sub);
       const readiness=value('readiness');
       const output=$('planResult');
       output.innerHTML=lessonMarkup(fallbackPlan(sub,student,notes,readiness),notes[0],false);
