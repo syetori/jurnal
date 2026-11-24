@@ -356,6 +356,7 @@ function render(){
   $('daily').dataset.shift=date;
   const content=$('content');
   const form=$('planForm');
+  if(form&&page!=='plan')cancelPlan(form);
   if(form&&page==='plan'&&(form.contains(document.activeElement)||$('planResult')?.textContent))return;
   content.innerHTML=({journal,history:historyPage,schedule:schedulePage,plan,shifts})[page]();
   if(page==='journal'){
@@ -376,6 +377,7 @@ function render(){
 }
 function openDialog(heading,body){
   const dialog=$('dialog');
+  cancelNoteDraft($('noteForm'));
   dialog.classList.remove('schedule-dialog');
   dialog.innerHTML='<div class="dialog-title"><h2>'+heading+'</h2><button type="button" aria-label="Закрыть" data-close>×</button></div>'+body;
   if(!dialog.open)dialog.showModal();
@@ -439,13 +441,98 @@ function viewHistoryCell(id,day){
   }).join('');
   openDialog(esc(data.students[id].name)+' · '+viewDate(day),body||'<p class="muted">Нет отметки или темы за этот день</p>');
 }
-function draft(){
-  const form=$('noteForm'), raw=form.elements.raw.value.trim();
+function cancelNoteDraft(form){
+  if(!form?.draftRequest)return;
+  form.draftRequest.abort();
+  form.draftRequest=null;
+  form.querySelector('[data-draft]').disabled=false;
+}
+function confirmedAIInput(raw){
+  const rosterWords=new Set(Object.values(data.students).flatMap(student=>
+    student.name.match(/\p{L}{2,}/gu)?.map(word=>word.toLowerCase())??[]
+  ));
+  const withoutContacts=raw
+    .replace(/(?:https?:\/\/|www\.)\S+|[\w.+-]+@[\w.-]+\.[a-z]{2,}/giu,' ')
+    .replace(/(?<![\p{L}\d])\+?\(?\d(?:[\s().-]*\d){6,}(?!\d)/gu,' ');
+  const withoutNames=withoutContacts.replace(/\p{L}+/gu,word=>{
+    const normalized=word.toLowerCase();
+    const isName=rosterWords.has(normalized)||[1,2,3].some(length=>
+      normalized.length-length>=4&&rosterWords.has(normalized.slice(0,-length))
+    );
+    return isName?' ':word;
+  });
+  return confirmedLessonText(withoutNames,'. ').replace(/\s+/g,' ').trim();
+}
+async function requestJournalAI(kind, payload, controller){
+  const timeout=setTimeout(()=>controller.abort(),25000);
+  try{
+    const base=new URL(window.JOURNAL_CONFIG.aiEndpoint);
+    if(base.protocol!=='https:')throw Error('invalid-ai-endpoint');
+    const response=await fetch(new URL('/generate',base),{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({kind,...payload}),
+      signal:controller.signal,
+      credentials:'omit'
+    });
+    if(!response.ok){
+      throw Error(response.status===429?'ai-limit':'ai-unavailable');
+    }
+    return await response.json();
+  }finally{
+    clearTimeout(timeout);
+  }
+}
+function localAIMessage(error){
+  return error?.message==='ai-limit'?'Бесплатный лимит ИИ на сегодня исчерпан.':'ИИ сейчас недоступен.';
+}
+function thesisWithoutUnstatedCompletion(thesis, input){
+  const completion=/(?<!\p{L})(?:готов[оаы]?|заверш(?:ил[аи]?|[её]н[оаы]?)|закончил[аи]?|закончен[оаы]?)(?!\p{L})/iu;
+  if(completion.test(input))return thesis;
+  return thesis.split(/(?<=[.!?])\s+/u).filter(sentence=>!completion.test(sentence)).join(' ');
+}
+async function draft(button){
+  const form=button.form, raw=form.elements.raw.value.trim();
   if(!raw){form.elements.raw.reportValidity();return;}
-  form.elements.note.value=draftLessonNote(raw,form.context.subject);
+  const note=form.elements.note, hint=$('draftHint'), sub=form.context.subject;
+  const input=confirmedAIInput(raw);
+  const provisional=input?draftLessonNote(raw,sub):'';
+  note.value=provisional;
   form.dataset.drafted='true';
   $('draftLabel').hidden=false;
-  $('draftHint').textContent=form.elements.note.value?'':'Укажите, что действительно проходили на занятии.';
+  if(!input){
+    hint.textContent='Укажите, что действительно проходили на занятии.';
+    return;
+  }
+  if(!window.JOURNAL_CONFIG.aiEndpoint){
+    hint.textContent='Локальный черновик. ИИ ещё не подключён.';
+    return;
+  }
+  const request=new AbortController();
+  form.draftRequest=request;
+  button.disabled=true;
+  hint.textContent='ИИ формулирует тезис…';
+  const isCurrent=()=>form.draftRequest===request&&form.isConnected&&$('dialog').open&&
+    form.elements.raw.value.trim()===raw&&note.value===provisional;
+  try{
+    const {thesis}=await requestJournalAI('thesis',{subject:subjects[sub],text:input},request);
+    if(!isCurrent())return;
+    if(typeof thesis!=='string'||thesis.length>480)throw Error('invalid-ai-answer');
+    if(!thesis.trim()){
+      note.value='';
+      hint.textContent='Уточните, что проходили на занятии.';
+      return;
+    }
+    note.value=thesisWithoutUnstatedCompletion(thesis,input)||provisional;
+    hint.textContent='';
+  }catch(error){
+    if(isCurrent())hint.textContent=localAIMessage(error)+' Можно отредактировать черновик.';
+  }finally{
+    if(form.draftRequest===request){
+      form.draftRequest=null;
+      button.disabled=false;
+    }
+  }
 }
 function recentLessonNotes(student,sub){
   const stamp=row=>row.date+' '+(scheduleFor(row.date).find(lesson=>lesson.id===row.period)?.start??'');
@@ -453,6 +540,46 @@ function recentLessonNotes(student,sub){
   return Object.values(data.records).filter(row=>row.student===student&&row.subject===sub&&row.status==='yes'&&row.date<=day)
     .map(row=>({time:stamp(row),note:confirmedLessonText(row.note,', ')}))
     .filter(row=>row.note).sort((a,b)=>b.time.localeCompare(a.time)).slice(0,8).map(row=>row.note);
+}
+function cancelPlan(form){
+  if(!form.planRequest)return;
+  form.planRequest.abort();
+  form.planRequest=null;
+  form.querySelector('button.primary').disabled=false;
+}
+async function preparePlan(form,button,student,sub,notes,readiness){
+  cancelPlan(form);
+  const output=$('planResult');
+  const local=lessonMarkup(fallbackPlan(sub,student,notes,readiness),notes[0],false);
+  if(!window.JOURNAL_CONFIG.aiEndpoint){
+    output.innerHTML=local;
+    if(button)button.disabled=false;
+    return;
+  }
+  const request=new AbortController();
+  form.planRequest=request;
+  if(button)button.disabled=true;
+  output.innerHTML='<p class="plan-progress">ИИ готовит план урока…</p>';
+  const isCurrent=()=>form.planRequest===request&&form.isConnected&&currentPage()==='plan';
+  try{
+    const plan=await requestJournalAI('plan',{
+      subject:subjects[sub],
+      grade:Number(student.grade.match(/\d+/u)?.[0]),
+      age:Number(student.age),
+      readiness,
+      notes:notes.map(note=>confirmedAIInput(note).slice(0,800)).filter(Boolean)
+    },request);
+    if(!isCurrent())return;
+    if(!completeLesson(plan))throw Error('invalid-ai-answer');
+    output.innerHTML=lessonMarkup(plan,notes[0],true);
+  }catch(error){
+    if(isCurrent())output.innerHTML='<p class="plan-progress">'+esc(localAIMessage(error))+'</p>'+local;
+  }finally{
+    if(form.planRequest===request){
+      form.planRequest=null;
+      if(button)button.disabled=false;
+    }
+  }
 }
 function goToJournal(day,lesson=null){
   date=day;month=day.slice(0,7);activeLesson=lesson;selected.clear();
@@ -518,7 +645,7 @@ document.addEventListener('click',async event=>{
     if(b.shift){shiftDialog(b.shift);return;}
     if(b.attendance){attendanceDialog(b.attendance);return;}
     if(b.close!==undefined){if(!pending&&!$('absenceForm'))$('dialog').close();return;}
-    if(b.draft!==undefined){draft();return;}
+    if(b.draft!==undefined){await draft(button);return;}
     if(b.removeNote!==undefined){
       const {ids,context,lesson}=button.form;
       const id=ids[0], old=lesson?lessonRecord(id,context.date,lesson):stored(id,context.date,context.subject);
@@ -545,7 +672,8 @@ document.addEventListener('change',event=>{
   }
   if(target.form?.id==='scheduleForm'){updateScheduleDraft(target);return;}
   if(target.form?.id==='planForm'){
-    if(target.form.dataset.busy!=='true')$('planResult').replaceChildren();
+    cancelPlan(target.form);
+    $('planResult').replaceChildren();
     return;
   }
   if(target.dataset.select){
@@ -565,6 +693,9 @@ document.addEventListener('change',event=>{
 $('dialog').addEventListener('cancel',event=>{
   if(pending||$('absenceForm'))event.preventDefault();
 });
+$('dialog').addEventListener('close',()=>{
+  if(!$('dialog').open)cancelNoteDraft($('noteForm'));
+});
 document.addEventListener('keydown',event=>{
   if(event.key==='Escape'&&miniOpen&&!$('dialog').open){miniOpen=false;renderMiniSchedule();$('miniScheduleToggle').focus();}
 });
@@ -580,8 +711,13 @@ document.addEventListener('input',event=>{
   if(event.target.form?.id==='scheduleForm'&&event.target.matches('[data-grade],[data-time]'))updateScheduleDraft(event.target);
   if(event.target.id==='query'){query=event.target.value;selected.clear();updateTable();}
   if(event.target.id==='historyQuery'){query=event.target.value;selected.clear();updateHistory();}
-  if(event.target.name==='raw'&&event.target.form?.id==='noteForm'){
-    delete event.target.form.dataset.drafted;event.target.form.elements.note.value='';$('draftLabel').hidden=true;$('draftHint').textContent='';
+  const form=event.target.form;
+  if(form?.id==='noteForm'&&['raw','note'].includes(event.target.name)){
+    cancelNoteDraft(form);
+    $('draftHint').textContent='';
+    if(event.target.name==='raw'){
+      delete form.dataset.drafted;form.elements.note.value='';$('draftLabel').hidden=true;
+    }
   }
 });
 document.addEventListener('submit',async event=>{
@@ -608,6 +744,7 @@ document.addEventListener('submit',async event=>{
       if(!canWriteJournal(context.date))throw Error('Отметки доступны за сегодня');
       if(!raw)throw Error('Введите ключевые слова');
       if(!confirmedLessonText(note))throw Error('Добавьте подтверждённую тему занятия');
+      cancelNoteDraft(form);
       const changes=Object.fromEntries(form.ids.map(id=>{
         const previous=form.lesson?lessonRecord(id,context.date,form.lesson):null;
         const period=previous?previous.period:form.lesson?.id;
@@ -637,12 +774,9 @@ document.addEventListener('submit',async event=>{
       message('Причина отсутствия сохранена');
     }else if(form.id==='planForm'){
       const student=data.students[value('student')], sub=Number(value('sub'));
-      if(!student)throw Error('Выберите ученика');
+      if(!student||!validSubject(sub))throw Error('Выберите ученика и предмет');
       const notes=recentLessonNotes(value('student'),sub);
-      const readiness=value('readiness');
-      const output=$('planResult');
-      output.innerHTML=lessonMarkup(fallbackPlan(sub,student,notes,readiness),notes[0],false);
-      if(button)button.disabled=false;
+      await preparePlan(form,button,student,sub,notes,value('readiness'));
       return;
     }
     $('dialog').close();

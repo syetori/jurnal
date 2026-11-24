@@ -140,6 +140,7 @@ function formatThesisTopics(topics){
 function draftLessonNote(raw, subject){
   const clean=thesisAliases.reduce((text,[pattern,alias])=>text.replace(pattern,alias), raw)
     .replace(/\s+и\s+т\.?\s*д\.?(?=$|[\s,;!?])/giu,'')
+    .replace(/\s+и\s+(?:ч[её]та|ч[её]-то|что-то\s+ещ[её])(?=$|[\s,.!?;])/giu,'')
     .replace(/([+−*\/-])\s*,\s*(?=[+−*\/-](?:$|[\s,;]))/gu,'$1 ');
   const clauses=clean.split(/(?<=[.!?])\s+|[\n;]/u).flatMap(statement=>{
     const pieces=confirmedLessonText(statement,'\n').split('\n').flatMap(text=>
@@ -151,6 +152,10 @@ function draftLessonNote(raw, subject){
   const defaultPlatform=platforms.length===1?platforms[0]:'';
   const items=[], groups=new Map(), toolMentions=new Set();
   for(const {text:clause,inheritedAction} of clauses){
+    if(subject===1&&/^(?:(?:делал[аи]?)\s+робот(?:а)?|работал[аи]?\s+над\s+роботом)$/iu.test(clause)){
+      items.push('Работали над роботом.');
+      continue;
+    }
     if(clauses.length>1&&/^(?:программирование|робототехника|цифровая грамотность)$/iu.test(clause))continue;
     const parsed=parseThesisTopics(clause,subject,inheritedAction);
     if(!parsed){
@@ -361,11 +366,11 @@ function lessonMarkup(plan, latest, viaAI){
     ['Разминка · 5 мин',plan.warmup],['Материал · 5 мин',plan.material],
     ['Пример · 6 мин',plan.example],['Практика · 10 мин',plan.practice],['Проверка · 4 мин',plan.checkpoint]
   ];
-  return '<article class="lesson"><div class="lesson-heading"><small>'+(viaAI?'План по записям ученика':'План на основе журнала')+
+  return '<article class="lesson"><div class="lesson-heading"><small>'+(viaAI?'План GPT по записям ученика':'Локальный план на основе журнала')+
     '</small><h2>'+esc(plan.topic)+'</h2><p>'+esc(plan.goal)+'</p>'+
     (latest?'<small>Последняя запись · '+esc(latest)+'</small>':'<small>По предмету пока нет записей</small>')+
     '</div><table class="lesson-table"><tbody>'+rows.map(([label,description])=>
-      '<tr><th scope="row">'+label+'</th><td>'+esc(description)+'</td></tr>'
+      '<tr><th scope="row">'+label+'</th><td>'+esc(description).replace(/\n/g,'<br>')+'</td></tr>'
     ).join('')+'</tbody></table><div class="lesson-tasks"><h3>Задания · 10 мин</h3><ol>'+
     plan.tasks.map(task=>'<li>'+esc(task)+'</li>').join('')+
     '</ol><p><strong>Если готов к следующему шагу</strong> '+esc(plan.extension)+'</p></div></article>';
